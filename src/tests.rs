@@ -53,6 +53,274 @@ mod infrared_datagram {
         other.buffer = 0b10111;
         assert_eq!(sut, other);
     }
+
+    #[test]
+    fn is_one() {
+        let sut = Datagram::new("0");
+        assert_eq!(false, sut.is_one(0));
+
+        let sut = Datagram::new("1");
+        assert_eq!(true, sut.is_one(0));
+
+        let sut = Datagram::new("01");
+        assert_eq!(true, sut.is_one(1));
+        assert_eq!(false, sut.is_one(0));
+    }
+
+    #[test]
+    #[should_panic]
+    fn is_one_panic() {
+        let sut = Datagram::new("01");
+        sut.is_one(2);
+    }
+}
+
+mod datagram_iterator {
+
+    use super::*;
+
+    #[test]
+    fn iterate_empty() {
+        let datagram = Datagram::new("");
+        let mut sut = datagram.into_iter();
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
+
+    #[test]
+    fn iterate_zero() {
+        let datagram = Datagram::new("0");
+        let mut sut = datagram.into_iter();
+        match sut.next() {
+            Some(bit) => assert!(!bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
+
+    #[test]
+    fn iterate_one() {
+        let datagram = Datagram::new("1");
+        let mut sut = datagram.into_iter();
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
+
+    #[test]
+    fn iterate_zero_one() {
+        let datagram = Datagram::new("01");
+        let mut sut = datagram.into_iter();
+        match sut.next() {
+            Some(bit) => assert!(!bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
+
+    #[test]
+    fn iterate_one_zero() {
+        let datagram = Datagram::new("10");
+        let mut sut = datagram.into_iter();
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(!bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
+
+    #[test]
+    fn iterate_zero_one_one() {
+        let datagram = Datagram::new("011");
+        let mut sut = datagram.into_iter();
+        match sut.next() {
+            Some(bit) => assert!(!bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
+}
+
+mod encoder {
+
+    use super::*;
+
+    #[test]
+    fn iterate_empty() {
+        let datagram = Datagram::new("");
+        let mut sut = Encoder::new(datagram);
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
+
+    #[test]
+    fn iterate_zero() {
+        let datagram = Datagram::new("0");
+        let mut sut = Encoder::new(datagram);
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(!bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
+
+    #[test]
+    fn iterate_one() {
+        let datagram = Datagram::new("1");
+        let mut sut = Encoder::new(datagram);
+        match sut.next() {
+            Some(bit) => assert!(!bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
+
+    #[test]
+    fn iterate_zero_zero() {
+        let datagram = Datagram::new("00");
+        let mut sut = Encoder::new(datagram);
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(!bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(!bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
+
+    #[test]
+    fn iterate_zero_one() {
+        let datagram = Datagram::new("01");
+        let mut sut = Encoder::new(datagram);
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(!bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(!bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(bit) => assert!(bit),
+            None => assert!(false),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+        match sut.next() {
+            Some(_bit) => assert!(false),
+            None => assert!(true),
+        };
+    }
 }
 
 mod decoder {
@@ -66,7 +334,7 @@ mod decoder {
                 None => assert!(false, "None at compare"),
                 Some(datagram) => assert_eq!(datagram, expected),
             };
-        }
+        };
     }
 
     macro_rules! assert_signal_sampling {
@@ -82,7 +350,7 @@ mod decoder {
                     _ => (),
                 };
             }
-        }
+        };
     }
 
     #[test]

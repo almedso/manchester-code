@@ -63,6 +63,8 @@
 
 use defmt::Format;
 
+use core::iter::{IntoIterator, Iterator};
+
 #[derive(Default, Copy, Clone, Debug)]
 pub struct Datagram {
     length_in_bit: u8,
@@ -110,12 +112,16 @@ impl Datagram {
         }
         datagram
     }
-
+    /// Determine of the n-th bit of the datagram is one
+    ///
+    /// Indexing sequence is analog to vectors, it starts from zero the bit added at the first add_bit call
+    /// to n-1 associated with the bit added at the n-th add_bit call.
+    /// The length of the datagram quals n
     pub fn is_one(&self, index: u8) -> bool {
         if index >= self.length_in_bit {
             panic!("Wrong Index")
         }
-        let mask: u128 = 1 << (self.length_in_bit - index);
+        let mask: u128 = 1 << (self.length_in_bit - 1 - index);
         !matches!(mask & self.buffer, 0)
     }
 }
@@ -126,7 +132,88 @@ impl PartialEq for Datagram {
     }
 }
 
+pub struct DatagramIterator {
+    datagram: Datagram,
+    index: u8,
+}
+
+impl IntoIterator for Datagram {
+    type Item = bool;
+    type IntoIter = DatagramIterator;
+
+    fn into_iter(self) -> Self::IntoIter {
+        DatagramIterator {
+            datagram: self,
+            index: self.length(),
+        }
+    }
+}
+
+impl Iterator for DatagramIterator {
+    type Item = bool;
+    fn next(&mut self) -> Option<Self::Item> {
+        if 0 < self.index {
+            self.index -= 1;
+            Some(
+                self.datagram
+                    .is_one(self.datagram.length() - 1 - self.index),
+            )
+        } else {
+            None
+        }
+    }
+}
+
 impl Eq for Datagram {}
+
+impl Format for Datagram {
+    fn format(&self, f: defmt::Formatter) {
+        for index in 0..self.length_in_bit {
+            if self.is_one(self.length_in_bit - 1 - index) {
+                defmt::write!(f, "1");
+            } else {
+                defmt::write!(f, "0");
+            }
+        }
+    }
+}
+
+pub struct Encoder {
+    datagram_iter: DatagramIterator,
+    first_half_bit: bool,
+    last_value: Option<bool>,
+}
+
+impl Encoder {
+    pub fn new(d: Datagram) -> Self {
+        let mut datagram_iter = d.into_iter();
+        let last_value = datagram_iter.next();
+        Encoder {
+            datagram_iter,
+            first_half_bit: true,
+            last_value,
+        }
+    }
+}
+
+impl Iterator for Encoder {
+    type Item = bool;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.last_value {
+            Some(bit) => {
+                if self.first_half_bit {
+                    self.first_half_bit = false;
+                    Some(!bit)
+                } else {
+                    self.first_half_bit = true;
+                    self.last_value = self.datagram_iter.next();
+                    Some(bit)
+                }
+            }
+            None => None,
+        }
+    }
+}
 
 pub struct Decoder {
     datagram: Datagram,
@@ -135,18 +222,6 @@ pub struct Decoder {
     recording_distance: u8,
     high_inactivity: bool,
     receiving_started: bool,
-}
-
-impl Format for Datagram {
-    fn format(&self, f: defmt::Formatter) {
-        for index in 0..self.length_in_bit {
-            if self.is_one(index) {
-                defmt::write!(f, "1");
-            } else {
-                defmt::write!(f, "0");
-            }
-        }
-    }
 }
 
 impl Decoder {
@@ -192,7 +267,8 @@ impl Decoder {
                 self.receiving_started = true;
                 self.recording_distance = 1;
             }
-            if self.recording_distance >= LOWER_BARRIER && self.recording_distance <= UPPER_BARRIER {
+            if self.recording_distance >= LOWER_BARRIER && self.recording_distance <= UPPER_BARRIER
+            {
                 // full bit length - if a valid bit it must be a edge just before
                 self.datagram
                     .add_bit(sample ^ !self.high_inactivity)
