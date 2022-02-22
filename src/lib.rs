@@ -65,6 +65,8 @@ use defmt::Format;
 
 use core::iter::{IntoIterator, Iterator};
 
+use embedded_hal::Pwm;
+
 #[derive(Default, Copy, Clone, Debug)]
 pub struct Datagram {
     length_in_bit: u8,
@@ -132,6 +134,7 @@ impl PartialEq for Datagram {
     }
 }
 
+#[derive(Debug)]
 pub struct DatagramIterator {
     datagram: Datagram,
     index: u8,
@@ -178,6 +181,7 @@ impl Format for Datagram {
     }
 }
 
+#[derive(Debug)]
 pub struct Encoder {
     datagram_iter: DatagramIterator,
     first_half_bit: bool,
@@ -296,6 +300,76 @@ impl Decoder {
         }
         return_value
     }
+}
+
+#[derive(Debug)]
+pub struct InfraredEmitter<P> {
+    encoder: Option<Encoder>,
+    max_pause_cycles: u8,
+    current_pause_cycles: u8,
+    pwm: (P, <P as Pwm>::Channel),
+}
+
+impl <P: Pwm> InfraredEmitter<P> {
+
+    pub fn new(pause_cycles: u8, pwm: P) -> Self {
+        InfraredEmitter {
+            encoder: None,
+            max_pause_cycles: pause_cycles,
+            current_pause_cycles: 0,
+            pwm,
+        }
+    }
+
+    /// Immediately start sending a datagram if possible
+    ///
+    /// Sending is possible iff there is no sending procedure in progress.
+    /// A call to this function is not blocking
+    ///
+    /// # Arguments
+    ///
+    /// * `datagram` - The datagram to be send
+    /// * `sending_power` - The duty cycle of the pwm in percent
+    ///                     should be less than or equal 25 (percent)
+    ///                     Is reduced to 25 if a higher value is given.
+    ///                     Lower sending power is appropriate for pairing datagrams.
+    ///
+    /// # Returns
+    ///
+    /// * *true* - if sending was initiated
+    /// * *false* - if sending was not possible to initiate
+    pub fn send_if_possible(&mut self, datagram: Datagram, sending_power: u8) -> bool {
+        false
+    }
+
+    /// Progress on sending a datagram by emitting a half bit
+    ///
+    /// This function needs to be called every half-bit period, i.e. each 889 µs.
+    /// The periodically required call is most likely delegated to a timer ISR.
+    ///
+    /// half-bit emitting happens by enabling/disabling a a properly configured
+    /// PWM.
+    pub fn send_half_bit(&mut self) -> () {
+        match self.encoder {
+            Some(encoder) => match encoder.next() {
+                Some(half_bit) => {
+                    if half_bit {
+                        self.pwm.enable(());
+                    } else {
+                        self.pwm.disable(());
+                    }
+                },
+                None => {
+                    self.pwm.disable(());
+                    self.encoder = None;
+                }
+            },
+            None => {
+                // the pwm is already disabled -> manage pause period
+            }
+        }
+        }
+
 }
 
 #[cfg(test)]
