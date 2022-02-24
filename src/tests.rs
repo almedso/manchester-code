@@ -582,4 +582,3 @@ mod decoder {
         assert_receive_datagram!(&mut sut, false, "11");
     }
 }
-
