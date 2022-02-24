@@ -355,22 +355,22 @@ mod decoder {
 
     #[test]
     fn new() {
-        let sut = Decoder::new(true);
+        let sut = Decoder::new(true, false);
         assert_eq!(true, sut.high_inactivity);
         assert_eq!(true, sut.previous_sample);
 
-        let sut = Decoder::new(false);
+        let sut = Decoder::new(false, false);
         assert_eq!(false, sut.high_inactivity);
         assert_eq!(false, sut.previous_sample);
 
-        assert_eq!(0, sut.edge_distance);
-        assert_eq!(0, sut.recording_distance);
+        assert_eq!(NO_EDGE_EXIT_LIMIT, sut.edge_distance);
+        assert_eq!(NO_EDGE_EXIT_LIMIT, sut.recording_distance);
         assert_eq!(sut.datagram, Datagram::default());
     }
 
     #[test]
     fn zero_bit() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -379,7 +379,7 @@ mod decoder {
 
     #[test]
     fn zero_zero_bits() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -388,7 +388,7 @@ mod decoder {
 
     #[test]
     fn zero_zero_zero_bits() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------...---...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -397,7 +397,7 @@ mod decoder {
 
     #[test]
     fn zero_one_bits() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---------";
         assert_signal_sampling!(&mut sut, input);
@@ -406,7 +406,7 @@ mod decoder {
 
     #[test]
     fn zero_one_zero_bits() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......------...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -415,7 +415,7 @@ mod decoder {
 
     #[test]
     fn zero_one_zero_zero_bits() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......------...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -424,7 +424,7 @@ mod decoder {
 
     #[test]
     fn zero_one_one_bits() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---...---------";
         // 01       put = "--------......---------";
@@ -434,7 +434,7 @@ mod decoder {
 
     #[test]
     fn zero_one_one_zero_bits() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---...------...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -443,7 +443,7 @@ mod decoder {
 
     #[test]
     fn zero_one_one_one_bits() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -452,7 +452,7 @@ mod decoder {
 
     #[test]
     fn zero_one_one_one_zero_bits() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---...---...------...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -461,7 +461,7 @@ mod decoder {
 
     #[test]
     fn zero_one_one_one_one_bits() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---...---...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -470,7 +470,7 @@ mod decoder {
 
     #[test]
     fn low_inactivity_zero_bit() {
-        let mut sut = Decoder::new(false);
+        let mut sut = Decoder::new(false, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = ".........---.........";
         assert_signal_sampling!(&mut sut, input);
@@ -479,7 +479,7 @@ mod decoder {
 
     #[test]
     fn low_inactivity_zero_one_bits() {
-        let mut sut = Decoder::new(false);
+        let mut sut = Decoder::new(false, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "........------.........";
         assert_signal_sampling!(&mut sut, input);
@@ -488,7 +488,7 @@ mod decoder {
 
     #[test]
     fn low_inactivity_zero_zero_bits() {
-        let mut sut = Decoder::new(false);
+        let mut sut = Decoder::new(false, false);
         //           -----+-----+-----+-----+-----+-----+
         let input = "........---...---.........";
         assert_signal_sampling!(&mut sut, input);
@@ -497,43 +497,89 @@ mod decoder {
 
     #[test]
     fn failure_high_inactive_starts_with_low_sample() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         let input = "............";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn failure_low_inactive_start_with_low_sample() {
-        let mut sut = Decoder::new(false);
+        let mut sut = Decoder::new(false, false);
         let input = "......................";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn failure_low_inactive_starts_with_high_sample() {
-        let mut sut = Decoder::new(false);
+        let mut sut = Decoder::new(false, false);
         let input = "-----------------";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn failure_high_inactive_start_with_high_sample() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         let input = "-----------------------";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn no_datagram_low_inactive_one_edge_only() {
-        let mut sut = Decoder::new(false);
+        let mut sut = Decoder::new(false, false);
         let input = "...........-----------";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn no_datagram_high_inactive_one_edge_only() {
-        let mut sut = Decoder::new(true);
+        let mut sut = Decoder::new(true, false);
         let input = "------------............";
         assert_signal_sampling!(&mut sut, input);
     }
+
+    #[test]
+    fn one_bit() {
+        let mut sut = Decoder::new(true, true);
+        //           -----+-----+-----+-----+-----+-----+
+        let input = "--------...---------";
+        assert_signal_sampling!(&mut sut, input);
+        assert_receive_datagram!(&mut sut, true, "1");
+    }
+
+    #[test]
+    fn one_one_bits() {
+        let mut sut = Decoder::new(true, true);
+        //           -----+-----+-----+-----+-----+-----+
+        let input = "--------...---...---------";
+        assert_signal_sampling!(&mut sut, input);
+        assert_receive_datagram!(&mut sut, true, "11");
+    }
+
+    #[test]
+    fn one_zero_zero_bits() {
+        let mut sut = Decoder::new(true, true);
+        //           -----+-----+-----+-----+-----+-----+
+        let input = "--------...------...---...---------";
+        assert_signal_sampling!(&mut sut, input);
+        assert_receive_datagram!(&mut sut, true, "100");
+    }
+
+    #[test]
+    fn low_inactivity_one_zero_bits() {
+        let mut sut = Decoder::new(false, true);
+        //           -----+-----+-----+-----+-----+-----+
+        let input = "........---......---.........";
+        assert_signal_sampling!(&mut sut, input);
+        assert_receive_datagram!(&mut sut, false, "10");
+    }
+
+    #[test]
+    fn low_inactivity_one_one_bits() {
+        let mut sut = Decoder::new(false, true);
+        //           -----+-----+-----+-----+-----+-----+
+        let input = "........---...---.........";
+        assert_signal_sampling!(&mut sut, input);
+        assert_receive_datagram!(&mut sut, false, "11");
+    }
 }
+
