@@ -85,12 +85,21 @@
 //! ```
 
 #![no_std]
+#![deny(warnings)]
+#![deny(unsafe_code)]
 
 use defmt::Format;
 
 use core::iter::{IntoIterator, Iterator};
+use core::ops::Index;
 
 use embedded_hal::Pwm;
+
+#[derive(Copy, Clone, Debug)]
+pub enum BitOrder {
+    BigEndian,    // MSB is transmitted first; LSB is transmitted last
+    LittleEndian, // LSB is transmitted first; MSB is transmitted last
+}
 
 /// Representation of a datagram
 ///
@@ -115,25 +124,62 @@ impl Datagram {
     /// # Arguments
     ///
     /// * `bit` - The bit value to record at index 0
+    /// * `bit_order`- The bit order either BigEndian or LittleEndian determines
+    ///                if the bit is added at the MSB or LSB position
     ///
     /// # Returns
     ///
     /// * Error - if the datagram is already filled up to its capacity.
     /// * () - if the bit was successfully added
-    fn add_bit(&mut self, bit: bool) -> Result<(), Error> {
+    fn add_bit(&mut self, bit: bool, order: BitOrder) -> Result<(), Error> {
         if self.length_in_bit == 127 {
             Err(Error)
         } else {
+            match order {
+                BitOrder::BigEndian => {
+                    self.buffer <<= 1;
+                    if bit {
+                        self.buffer += 1;
+                    };
+                }
+                BitOrder::LittleEndian => {
+                    if bit {
+                        self.buffer += 1 << self.length_in_bit;
+                    }
+                }
+            }
             self.length_in_bit += 1;
-            self.buffer <<= 1;
-            if bit {
-                self.buffer += 1;
-            };
             Ok(())
         }
     }
-    pub fn length(&self) -> u8 {
+
+    pub fn len(&self) -> u8 {
         self.length_in_bit
+    }
+
+    pub fn is_empty(&self) -> bool {
+        0 == self.length_in_bit
+    }
+
+    /// Extract a data slice of from the datagram
+    ///
+    /// Byteorder is maintained
+    pub fn extract_data(&self, min: u8, max: u8) -> u128 {
+        if max > self.length_in_bit {
+            panic!("Max index to big");
+        }
+        if min >= max {
+            panic!("Min index to greater than max index");
+        }
+
+        let mut value = 0_u128;
+        for index in min..max {
+            let mask: u128 = 1 << (self.length_in_bit - 1 - index);
+            let bit = if mask & self.buffer == 0 { &0 } else { &1 };
+            value <<= 1;
+            value += bit;
+        }
+        value
     }
 
     /// Create a new datagram from "binary" string
@@ -153,24 +199,19 @@ impl Datagram {
         let mut datagram = Datagram::default();
         for bit in bit_repr.bytes() {
             match bit {
-                b'0' => datagram.add_bit(false).unwrap(),
-                b'1' => datagram.add_bit(true).unwrap(),
+                b'0' => datagram.add_bit(false, BitOrder::BigEndian).unwrap(),
+                b'1' => datagram.add_bit(true, BitOrder::BigEndian).unwrap(),
                 _ => (),
             }
         }
         datagram
     }
-    /// Determine of the n-th bit of the datagram is one
-    ///
-    /// Indexing sequence is analog to vectors,
-    /// it starts from zero the bit added at the first add_bit call
-    /// to n-1 associated with the bit added at the n-th add_bit call.
-    /// The length of the datagram quals n
-    ///
-    /// # Returns
-    ///
-    /// * true - if the bit at index is "1"
-    /// * false - if the bit at index is "0"
+}
+
+impl Index<u8> for Datagram {
+    type Output = u128;
+
+    /// Access the n-th element via index
     ///
     /// # Panics
     ///
@@ -181,16 +222,20 @@ impl Datagram {
     /// ```rust
     /// use manchester_code::Datagram;
     ///
-    /// let datagram = Datagram::new("0-111_10101_00001111");
-    /// assert_eq!(false, datagram.is_one(0));
-    /// assert_eq!(true, datagram.is_one(3));
+    /// let datagram = Datagram::new("0-111_10101_00001111");  // BigEndian representation
+    /// assert_eq!(0, datagram[0]);
+    /// assert_eq!(1, datagram[3]);
     /// ```
-    pub fn is_one(&self, index: u8) -> bool {
+    fn index(&self, index: u8) -> &Self::Output {
         if index >= self.length_in_bit {
             panic!("Wrong Index")
         }
         let mask: u128 = 1 << (self.length_in_bit - 1 - index);
-        !matches!(mask & self.buffer, 0)
+        if mask & self.buffer == 0 {
+            &0
+        } else {
+            &1
+        }
     }
 }
 
@@ -213,7 +258,7 @@ impl IntoIterator for Datagram {
     fn into_iter(self) -> Self::IntoIter {
         DatagramIterator {
             datagram: self,
-            index: self.length(),
+            index: self.len(),
         }
     }
 }
@@ -223,10 +268,7 @@ impl Iterator for DatagramIterator {
     fn next(&mut self) -> Option<Self::Item> {
         if 0 < self.index {
             self.index -= 1;
-            Some(
-                self.datagram
-                    .is_one(self.datagram.length() - 1 - self.index),
-            )
+            Some(1 == self.datagram[self.datagram.len() - 1 - self.index])
         } else {
             None
         }
@@ -241,7 +283,7 @@ impl Format for Datagram {
             if 0 == index % 4 {
                 defmt::write!(f, "-");
             }
-            if self.is_one(self.length_in_bit - 1 - index) {
+            if 1 == self[self.length_in_bit - 1 - index] {
                 defmt::write!(f, "1");
             } else {
                 defmt::write!(f, "0");
@@ -316,6 +358,7 @@ pub struct Decoder {
     // Config data
     high_inactivity: bool,
     first_bit_is_one: bool,
+    bit_order: BitOrder,
     // Collected output data
     datagram: Datagram,
     // Internal processing control data
@@ -347,7 +390,9 @@ impl Decoder {
     /// * `first_bit_is_one` - A *true value enforces the bit recording to start
     ///                        with a "1". This is important to know upfront
     ///                        where a new bit starts
-    pub const fn new(high_inactivity: bool, first_bit_is_one: bool) -> Self {
+    /// * `bit_order` - Either BigEndian (MSP is received first) or
+    ///                 LittleEndian (LSB is received first)
+    pub const fn new(high_inactivity: bool, first_bit_is_one: bool, bit_order: BitOrder) -> Self {
         Decoder {
             datagram: Datagram {
                 buffer: 0,
@@ -360,6 +405,7 @@ impl Decoder {
             high_inactivity,
             first_bit_is_one,
             record_marker_reached: false,
+            bit_order,
         }
     }
 
@@ -434,7 +480,7 @@ impl Decoder {
             if self.record_marker_reached {
                 // In the middle of a bit transmission the value is derived from the new sample
                 self.datagram
-                    .add_bit(sample ^ !self.high_inactivity)
+                    .add_bit(sample ^ !self.high_inactivity, self.bit_order)
                     .unwrap();
                 // reset internal data for the next record_marker
                 self.recording_distance = 1;
@@ -449,7 +495,7 @@ impl Decoder {
 
         if self.edge_distance > NO_EDGE_EXIT_LIMIT {
             // end of datagram condition no edge anymore
-            if self.datagram.length() > 0 && sample ^ !self.high_inactivity {
+            if !self.datagram.is_empty() && sample ^ !self.high_inactivity {
                 return_value = Some(self.datagram);
                 self.receiving_started = false;
             }

@@ -16,18 +16,29 @@ mod infrared_datagram {
     fn add_bit_datagram_full() {
         let mut sut = Datagram::default();
         sut.length_in_bit = 127;
-        assert!(sut.add_bit(true).is_err());
+        assert!(sut.add_bit(true, BitOrder::BigEndian).is_err());
     }
 
     #[test]
-    fn add_bit_some_bits() {
+    fn add_bit_some_bits_big_endian() {
         let mut sut = Datagram::default();
-        assert!(sut.add_bit(true).is_ok());
-        assert!(sut.add_bit(false).is_ok());
-        assert!(sut.add_bit(true).is_ok());
-        assert!(sut.add_bit(false).is_ok());
+        assert!(sut.add_bit(true, BitOrder::BigEndian).is_ok());
+        assert!(sut.add_bit(false, BitOrder::BigEndian).is_ok());
+        assert!(sut.add_bit(true, BitOrder::BigEndian).is_ok());
+        assert!(sut.add_bit(false, BitOrder::BigEndian).is_ok());
         assert_eq!(4, sut.length_in_bit);
         assert_eq!(0b1010, sut.buffer);
+    }
+
+    #[test]
+    fn add_bit_some_bits_little_endian() {
+        let mut sut = Datagram::default();
+        assert!(sut.add_bit(true, BitOrder::LittleEndian).is_ok());
+        assert!(sut.add_bit(false, BitOrder::LittleEndian).is_ok());
+        assert!(sut.add_bit(true, BitOrder::LittleEndian).is_ok());
+        assert!(sut.add_bit(false, BitOrder::LittleEndian).is_ok());
+        assert_eq!(4, sut.length_in_bit);
+        assert_eq!(0b0101, sut.buffer);
     }
 
     #[test]
@@ -55,23 +66,44 @@ mod infrared_datagram {
     }
 
     #[test]
-    fn is_one() {
+    fn index_access() {
         let sut = Datagram::new("0");
-        assert_eq!(false, sut.is_one(0));
+        assert_eq!(0, sut[0]);
 
         let sut = Datagram::new("1");
-        assert_eq!(true, sut.is_one(0));
+        assert_eq!(1, sut[0]);
 
         let sut = Datagram::new("01");
-        assert_eq!(true, sut.is_one(1));
-        assert_eq!(false, sut.is_one(0));
+        assert_eq!(0, sut[0]);
+        assert_eq!(1, sut[1]);
+    }
+
+    #[test]
+    fn extract_data() {
+        let sut = Datagram::new("010011");
+        assert_eq!(0b01, sut.extract_data(0, 2));
+        assert_eq!(0b0011, sut.extract_data(2, 6));
     }
 
     #[test]
     #[should_panic]
-    fn is_one_panic() {
+    fn range_access_too_big_index() {
         let sut = Datagram::new("01");
-        sut.is_one(2);
+        let _ = sut[2];
+    }
+
+    #[test]
+    #[should_panic]
+    fn extract_data_too_big_max_index() {
+        let sut = Datagram::new("01");
+        let _ = sut.extract_data(0, 4);
+    }
+
+    #[test]
+    #[should_panic]
+    fn extract_data_to_big_min_index() {
+        let sut = Datagram::new("01111");
+        let _ = sut.extract_data(5, 4);
     }
 }
 
@@ -355,11 +387,11 @@ mod decoder {
 
     #[test]
     fn new() {
-        let sut = Decoder::new(true, false);
+        let sut = Decoder::new(true, false, BitOrder::BigEndian);
         assert_eq!(true, sut.high_inactivity);
         assert_eq!(true, sut.previous_sample);
 
-        let sut = Decoder::new(false, false);
+        let sut = Decoder::new(false, false, BitOrder::BigEndian);
         assert_eq!(false, sut.high_inactivity);
         assert_eq!(false, sut.previous_sample);
 
@@ -370,7 +402,7 @@ mod decoder {
 
     #[test]
     fn zero_bit() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -379,7 +411,7 @@ mod decoder {
 
     #[test]
     fn zero_zero_bits() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -388,7 +420,7 @@ mod decoder {
 
     #[test]
     fn zero_zero_zero_bits() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------...---...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -397,7 +429,7 @@ mod decoder {
 
     #[test]
     fn zero_one_bits() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---------";
         assert_signal_sampling!(&mut sut, input);
@@ -406,7 +438,7 @@ mod decoder {
 
     #[test]
     fn zero_one_zero_bits() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......------...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -415,7 +447,7 @@ mod decoder {
 
     #[test]
     fn zero_one_zero_zero_bits() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......------...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -424,7 +456,7 @@ mod decoder {
 
     #[test]
     fn zero_one_one_bits() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---...---------";
         // 01       put = "--------......---------";
@@ -434,7 +466,7 @@ mod decoder {
 
     #[test]
     fn zero_one_one_zero_bits() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---...------...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -443,7 +475,7 @@ mod decoder {
 
     #[test]
     fn zero_one_one_one_bits() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -452,7 +484,7 @@ mod decoder {
 
     #[test]
     fn zero_one_one_one_zero_bits() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---...---...------...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -461,7 +493,7 @@ mod decoder {
 
     #[test]
     fn zero_one_one_one_one_bits() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......---...---...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -470,7 +502,7 @@ mod decoder {
 
     #[test]
     fn low_inactivity_zero_bit() {
-        let mut sut = Decoder::new(false, false);
+        let mut sut = Decoder::new(false, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = ".........---.........";
         assert_signal_sampling!(&mut sut, input);
@@ -479,7 +511,7 @@ mod decoder {
 
     #[test]
     fn low_inactivity_zero_one_bits() {
-        let mut sut = Decoder::new(false, false);
+        let mut sut = Decoder::new(false, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "........------.........";
         assert_signal_sampling!(&mut sut, input);
@@ -488,7 +520,7 @@ mod decoder {
 
     #[test]
     fn low_inactivity_zero_zero_bits() {
-        let mut sut = Decoder::new(false, false);
+        let mut sut = Decoder::new(false, false, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "........---...---.........";
         assert_signal_sampling!(&mut sut, input);
@@ -497,49 +529,49 @@ mod decoder {
 
     #[test]
     fn failure_high_inactive_starts_with_low_sample() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         let input = "............";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn failure_low_inactive_start_with_low_sample() {
-        let mut sut = Decoder::new(false, false);
+        let mut sut = Decoder::new(false, false, BitOrder::BigEndian);
         let input = "......................";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn failure_low_inactive_starts_with_high_sample() {
-        let mut sut = Decoder::new(false, false);
+        let mut sut = Decoder::new(false, false, BitOrder::BigEndian);
         let input = "-----------------";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn failure_high_inactive_start_with_high_sample() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         let input = "-----------------------";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn no_datagram_low_inactive_one_edge_only() {
-        let mut sut = Decoder::new(false, false);
+        let mut sut = Decoder::new(false, false, BitOrder::BigEndian);
         let input = "...........-----------";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn no_datagram_high_inactive_one_edge_only() {
-        let mut sut = Decoder::new(true, false);
+        let mut sut = Decoder::new(true, false, BitOrder::BigEndian);
         let input = "------------............";
         assert_signal_sampling!(&mut sut, input);
     }
 
     #[test]
     fn one_bit() {
-        let mut sut = Decoder::new(true, true);
+        let mut sut = Decoder::new(true, true, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -548,7 +580,7 @@ mod decoder {
 
     #[test]
     fn one_one_bits() {
-        let mut sut = Decoder::new(true, true);
+        let mut sut = Decoder::new(true, true, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -557,7 +589,7 @@ mod decoder {
 
     #[test]
     fn one_zero_zero_bits() {
-        let mut sut = Decoder::new(true, true);
+        let mut sut = Decoder::new(true, true, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------...------...---...---------";
         assert_signal_sampling!(&mut sut, input);
@@ -566,7 +598,7 @@ mod decoder {
 
     #[test]
     fn low_inactivity_one_zero_bits() {
-        let mut sut = Decoder::new(false, true);
+        let mut sut = Decoder::new(false, true, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "........---......---.........";
         assert_signal_sampling!(&mut sut, input);
@@ -575,7 +607,7 @@ mod decoder {
 
     #[test]
     fn low_inactivity_one_one_bits() {
-        let mut sut = Decoder::new(false, true);
+        let mut sut = Decoder::new(false, true, BitOrder::BigEndian);
         //           -----+-----+-----+-----+-----+-----+
         let input = "........---...---.........";
         assert_signal_sampling!(&mut sut, input);
