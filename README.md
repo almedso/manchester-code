@@ -6,12 +6,16 @@ Features:
 
 * Decode monotonically sampled data stream that is Manchester modulated
   like it is used in RC5
-* High/low IN-Activitity configuration
-* Automatic start and end of datagram detection
-* Sampling needs to be 3 times the length of half a bit. (i.e. only a
-  single periodic timer is needed), for a infrared receiver
-  889 µs halfbit period => the periodic timer should run all 297 µs.
-
+  * High/low IN-Activitity configuration
+  * Zero or one first bit configuration
+  * Big endian/ little endian configuration
+  * Automatic start and end of datagram detection
+  * Sampling needs to be 3 times the length of half a bit. (i.e. only a
+    single periodic timer is needed), for a infrared receiver
+    889 µs halfbit period => the periodic timer should run all 297 µs.
+* Encode
+  * Big endian/ little endian configuration
+    
 ## Manchester Modulation
 
 https://en.wikipedia.org/wiki/Manchester_code
@@ -65,5 +69,6 @@ fn main() -> ! {
 
 * defmt optional
 * fmt optional
-* Implement Encoder
 * async as stream
+* ci + readme reporting
+* publish
