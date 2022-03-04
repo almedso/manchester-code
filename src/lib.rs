@@ -90,7 +90,7 @@
 
 use defmt::Format;
 
-use core::iter::{IntoIterator, Iterator};
+use core::iter::Iterator;
 use core::ops::Index;
 
 use embedded_hal::Pwm;
@@ -136,13 +136,13 @@ impl Datagram {
             Err(Error)
         } else {
             match order {
-                BitOrder::BigEndian => {
+                BitOrder::LittleEndian => {
                     self.buffer <<= 1;
                     if bit {
                         self.buffer += 1;
                     };
                 }
-                BitOrder::LittleEndian => {
+                BitOrder::BigEndian => {
                     if bit {
                         self.buffer += 1 << self.length_in_bit;
                     }
@@ -206,6 +206,20 @@ impl Datagram {
         }
         datagram
     }
+
+    fn into_big_endian_iter(self) -> DatagramBigEndianIterator {
+        DatagramBigEndianIterator {
+            datagram: self,
+            index: self.len(),
+        }
+    }
+
+    fn into_little_endian_iter(self) -> DatagramLittleEndianIterator {
+        DatagramLittleEndianIterator {
+            datagram: self,
+            index: 0,
+        }
+    }
 }
 
 impl Index<u8> for Datagram {
@@ -222,9 +236,9 @@ impl Index<u8> for Datagram {
     /// ```rust
     /// use manchester_code::Datagram;
     ///
-    /// let datagram = Datagram::new("0-111_10101_00001111");  // BigEndian representation
-    /// assert_eq!(0, datagram[0]);
-    /// assert_eq!(1, datagram[3]);
+    /// let datagram = Datagram::new("0-111_10101_00001111");  // LittleEndian representation
+    /// assert_eq!(1, datagram[0]);
+    /// assert_eq!(0, datagram[5]);
     /// ```
     fn index(&self, index: u8) -> &Self::Output {
         if index >= self.length_in_bit {
@@ -245,36 +259,6 @@ impl PartialEq for Datagram {
     }
 }
 
-#[derive(Debug)]
-pub struct DatagramIterator {
-    datagram: Datagram,
-    index: u8,
-}
-
-impl IntoIterator for Datagram {
-    type Item = bool;
-    type IntoIter = DatagramIterator;
-
-    fn into_iter(self) -> Self::IntoIter {
-        DatagramIterator {
-            datagram: self,
-            index: self.len(),
-        }
-    }
-}
-
-impl Iterator for DatagramIterator {
-    type Item = bool;
-    fn next(&mut self) -> Option<Self::Item> {
-        if 0 < self.index {
-            self.index -= 1;
-            Some(1 == self.datagram[self.datagram.len() - 1 - self.index])
-        } else {
-            None
-        }
-    }
-}
-
 impl Eq for Datagram {}
 
 impl Format for Datagram {
@@ -292,40 +276,80 @@ impl Format for Datagram {
     }
 }
 
+#[derive(Debug)]
+pub struct DatagramBigEndianIterator {
+    datagram: Datagram,
+    index: u8,
+}
+
+impl Iterator for DatagramBigEndianIterator {
+    type Item = bool;
+    fn next(&mut self) -> Option<Self::Item> {
+        if 0 < self.index {
+            self.index -= 1;
+            Some(1 == self.datagram[self.index])
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DatagramLittleEndianIterator {
+    datagram: Datagram,
+    index: u8,
+}
+
+impl Iterator for DatagramLittleEndianIterator {
+    type Item = bool;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.datagram.len() > self.index {
+            self.index += 1;
+            Some(1 == self.datagram[self.index - 1])
+        } else {
+            None
+        }
+    }
+}
+
 /// Encodes a datagram to Manchester code
 ///
-/// The encoder turns into an interator.
+/// The encoder turns into an iterator.
 /// the encoding happens by calling the iterator.
 ///
 /// # Example
 ///
 /// ```rust
-/// use manchester_code::{Datagram, Encoder};
+/// use manchester_code::{
+///     Datagram,
+///     DatagramBigEndianIterator,
+///     Encoder};
 ///
-/// let mut encoder = Encoder::new(Datagram::new("01"));
+/// let mut encoder = Encoder::<DatagramBigEndianIterator>::new(Datagram::new("01"));
 /// assert_eq!(Some(true), encoder.next());
 /// assert_eq!(Some(false), encoder.next());
 /// assert_eq!(Some(false), encoder.next());
 /// assert_eq!(Some(true), encoder.next());
 /// assert_eq!(None, encoder.next());
 /// ```
+
 #[derive(Debug)]
-pub struct Encoder {
-    datagram_iter: DatagramIterator,
+pub struct Encoder<I> {
+    datagram_iter: I,
     first_half_bit: bool,
     last_value: Option<bool>,
 }
 
-impl Encoder {
+impl Encoder<DatagramBigEndianIterator> {
     /// Create a new Encoder ready to encode the datagram passed along
     ///
     /// # Arguments
     ///
     /// * `datagram` - the datagram to be encoded
     pub fn new(d: Datagram) -> Self {
-        let mut datagram_iter = d.into_iter();
+        let mut datagram_iter = d.into_big_endian_iter();
         let last_value = datagram_iter.next();
-        Encoder {
+        Encoder::<DatagramBigEndianIterator> {
             datagram_iter,
             first_half_bit: true,
             last_value,
@@ -333,7 +357,24 @@ impl Encoder {
     }
 }
 
-impl Iterator for Encoder {
+impl Encoder<DatagramLittleEndianIterator> {
+    /// Create a new Encoder ready to encode the datagram passed along
+    ///
+    /// # Arguments
+    ///
+    /// * `datagram` - the datagram to be encoded
+    pub fn new(d: Datagram) -> Self {
+        let mut datagram_iter = d.into_little_endian_iter();
+        let last_value = datagram_iter.next();
+        Encoder::<DatagramLittleEndianIterator> {
+            datagram_iter,
+            first_half_bit: true,
+            last_value,
+        }
+    }
+}
+
+impl<I: Iterator<Item = bool>> Iterator for Encoder<I> {
     type Item = bool;
     fn next(&mut self) -> Option<Self::Item> {
         match self.last_value {
@@ -350,6 +391,17 @@ impl Iterator for Encoder {
             None => None,
         }
     }
+}
+
+//
+pub enum InactivityLevel {
+    High,
+    Low,
+}
+
+pub enum FirstBitExpectation {
+    Zero,
+    One,
 }
 
 /// Decode a Manchester encoded stream of periodically taken samples into
@@ -392,7 +444,19 @@ impl Decoder {
     ///                        where a new bit starts
     /// * `bit_order` - Either BigEndian (MSP is received first) or
     ///                 LittleEndian (LSB is received first)
-    pub const fn new(high_inactivity: bool, first_bit_is_one: bool, bit_order: BitOrder) -> Self {
+    pub const fn new(
+        inactivity_level: InactivityLevel,
+        first_bit_expectation: FirstBitExpectation,
+        bit_order: BitOrder,
+    ) -> Self {
+        let high_inactivity = match inactivity_level {
+            InactivityLevel::High => true,
+            InactivityLevel::Low => false,
+        };
+        let first_bit_is_one = match first_bit_expectation {
+            FirstBitExpectation::One => true,
+            FirstBitExpectation::Zero => false,
+        };
         Decoder {
             datagram: Datagram {
                 buffer: 0,
@@ -523,19 +587,20 @@ impl Decoder {
 ///
 /// TODO
 #[derive(Debug)]
-pub struct InfraredEmitter<P, C> {
-    encoder: Option<Encoder>,
+pub struct InfraredEmitter<P, C, I> {
+    encoder: Option<Encoder<I>>,
     max_pause_cycles: u8,
     current_pause_cycles: u8,
     pwm: P,
     channel: C,
 }
 
-impl<P, C, D> InfraredEmitter<P, C>
+impl<P, C, D, I> InfraredEmitter<P, C, I>
 where
     P: Pwm + Pwm<Channel = C> + Pwm<Duty = D>,
     C: Copy,
     D: core::ops::Mul<Output = D> + core::ops::Div<Output = D>,
+    I: Iterator<Item = bool>,
 {
     /// Create a new infrared Emitter
     ///
@@ -555,36 +620,6 @@ where
             current_pause_cycles: 0,
             pwm,
             channel,
-        }
-    }
-
-    /// Immediately start sending a datagram if possible
-    ///
-    /// Sending is possible iff there is no sending procedure in progress.
-    /// A call to this function is not blocking
-    ///
-    /// # Arguments
-    ///
-    /// * `datagram` - The datagram to be send
-    /// * `sending_power` - The duty cycle of the pwm in percent
-    ///                     should be less than or equal 25 (percent)
-    ///                     Is reduced to 25 if a higher value is given.
-    ///                     Lower sending power is appropriate for pairing datagrams.
-    ///
-    /// # Returns
-    ///
-    /// * *true* - if sending was initiated
-    /// * *false* - if sending was not possible to initiate
-    pub fn send_if_possible(&mut self, datagram: Datagram, sending_power: D) -> bool {
-        if self.current_pause_cycles < self.max_pause_cycles {
-            false
-        } else {
-            // let mut sending_power: D = if sending_power > 25 { 25 } else { sending_power };
-            // let duty = self.pwm.get_max_duty() * sending_power / 100;
-            // self.pwm.set_duty(self.channel, duty);
-            self.pwm.set_duty(self.channel, sending_power);
-            self.encoder = Some(Encoder::new(datagram));
-            true
         }
     }
 
@@ -619,5 +654,78 @@ where
     }
 }
 
+impl<P, C, D> InfraredEmitter<P, C, DatagramBigEndianIterator>
+where
+    P: Pwm + Pwm<Channel = C> + Pwm<Duty = D>,
+    C: Copy,
+    D: core::ops::Mul<Output = D> + core::ops::Div<Output = D>,
+{
+    /// Immediately start sending a datagram if possible
+    ///
+    /// Sending is possible iff there is no sending procedure in progress.
+    /// A call to this function is not blocking
+    ///
+    /// # Arguments
+    ///
+    /// * `datagram` - The datagram to be send
+    /// * `sending_power` - The duty cycle of the pwm in percent
+    ///                     should be less than or equal 25 (percent)
+    ///                     Is reduced to 25 if a higher value is given.
+    ///                     Lower sending power is appropriate for pairing datagrams.
+    ///
+    /// # Returns
+    ///
+    /// * *true* - if sending was initiated
+    /// * *false* - if sending was not possible to initiate
+    pub fn send_if_possible(&mut self, datagram: Datagram, sending_power: D) -> bool {
+        if self.current_pause_cycles < self.max_pause_cycles {
+            false
+        } else {
+            // let mut sending_power: D = if sending_power > 25 { 25 } else { sending_power };
+            // let duty = self.pwm.get_max_duty() * sending_power / 100;
+            // self.pwm.set_duty(self.channel, duty);
+            self.pwm.set_duty(self.channel, sending_power);
+            self.encoder = Some(Encoder::<DatagramBigEndianIterator>::new(datagram));
+            true
+        }
+    }
+}
+
+impl<P, C, D> InfraredEmitter<P, C, DatagramLittleEndianIterator>
+where
+    P: Pwm + Pwm<Channel = C> + Pwm<Duty = D>,
+    C: Copy,
+    D: core::ops::Mul<Output = D> + core::ops::Div<Output = D>,
+{
+    /// Immediately start sending a datagram if possible
+    ///
+    /// Sending is possible iff there is no sending procedure in progress.
+    /// A call to this function is not blocking
+    ///
+    /// # Arguments
+    ///
+    /// * `datagram` - The datagram to be send
+    /// * `sending_power` - The duty cycle of the pwm in percent
+    ///                     should be less than or equal 25 (percent)
+    ///                     Is reduced to 25 if a higher value is given.
+    ///                     Lower sending power is appropriate for pairing datagrams.
+    ///
+    /// # Returns
+    ///
+    /// * *true* - if sending was initiated
+    /// * *false* - if sending was not possible to initiate
+    pub fn send_if_possible(&mut self, datagram: Datagram, sending_power: D) -> bool {
+        if self.current_pause_cycles < self.max_pause_cycles {
+            false
+        } else {
+            // let mut sending_power: D = if sending_power > 25 { 25 } else { sending_power };
+            // let duty = self.pwm.get_max_duty() * sending_power / 100;
+            // self.pwm.set_duty(self.channel, duty);
+            self.pwm.set_duty(self.channel, sending_power);
+            self.encoder = Some(Encoder::<DatagramLittleEndianIterator>::new(datagram));
+            true
+        }
+    }
+}
 #[cfg(test)]
 mod tests;
