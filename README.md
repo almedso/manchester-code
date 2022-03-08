@@ -1,8 +1,17 @@
-# manchester-code
+# Manchester Encoding and Decoding
 
-## Manchester Decoder
+[![crates.io](https://img.shields.io/crates/v/manchester-code?style=flat-square&logo=rust)](https://crates.io/crates/manchester-code)
+[![docs.rs](https://img.shields.io/badge/docs.rs-manchester--code-blue?style=flat-square)](https://docs.rs/manchester-code)
+[![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square-blue)](#license)
+[![rustc](https://img.shields.io/badge/rustc-1.52+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![CI status](https://github.com/almedso/manchester-code/actions/workflows/ci.yml/badge.svg)](https://github.com/almedso/manchester-code/actions/workflows/ci.yml)
 
-Features:
+
+A `no-std` library to allow Manchester encoding and decoding of datagrams.
+It requires certain deep embedded resources like timers, PWM and ISR's.
+
+
+## Features
 
 * Decode monotonically sampled data stream that is Manchester modulated
   like it is used in RC5
@@ -10,62 +19,29 @@ Features:
   * Zero or one first bit configuration
   * Big endian/ little endian configuration
   * Automatic start and end of datagram detection
-  * Sampling needs to be 3 times the length of half a bit. (i.e. only a
-    single periodic timer is needed), for a infrared receiver
-    889 µs halfbit period => the periodic timer should run all 297 µs.
+  * Requires a periodic timer
 * Encode
   * Big endian/ little endian configuration
-    
-## Manchester Modulation
+  * Requires a timer ISR and a PWM (single channel)
 
-https://en.wikipedia.org/wiki/Manchester_code
-
-* The first bit (after inactivity is always recognized as zero)
-* A datagram is finished if their is no edge anymore longer than a bit
-  period and all subsequent samples are at inactive level
-* all other situations are treated as errors and are rejected
 
 ## Example
 
-The lib runs in no_std environments
+* Check the [documentation](https://docs.rs/manchester-code)
 
-```rust
-#![deny(warnings)]
-#![deny(unsafe_code)]
-#![no_main]
-#![no_std]
+## License
 
-use nucleo_stm32g071rb as board;
+This project is licensed under
 
-use board::hal::prelude::*;
-use board::hal::stm32;
-use board::hal::nb::block;
+- MIT License ([`LICENSE.md`](LICENSE.md) or
+  [online](https://opensource.org/licenses/MIT))
 
-use manchester_code::Decode;
+## Contributing
 
-#[cortex_m_rt::entry]
-fn main() -> ! {
-    let dp = stm32::Peripherals::take().expect("cannot take peripherals");
-    let mut rcc = dp.RCC.constrain();
+Your PRs and suggestions are always welcome.
 
-    let gpioa = dp.GPIOA.split(&mut rcc);
-    let infrared = gpioa.pa8.into_pull_up_input();
 
-    let mut timer = dp.TIM17.timer(&mut rcc);
-    timer.start(297.us());
-    let mut receiver = Decoder::new(true);
-    loop {
-        match receiver.next(infrared.is_high().unwrap()) {
-            None => (),
-            Some(t) => if t.length() > 2 {
-                defmt::println!("Datagram: {:?}",  t ); },
-        };
-        block!(timer.wait()).unwrap();
-    }
-}
-```
-
-# Todo
+### Future Work
 
 * defmt optional
 * fmt optional

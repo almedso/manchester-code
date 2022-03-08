@@ -1,9 +1,22 @@
 [package]
 authors = ["Volker Kempert <volker.kempert@almedso.de>"]
 name = "manchester-code"
-publish = false
 edition = "2018"
 version = "0.1.0"
+description = "A no-std library to allow Manchester encoding and decoding of datagrams."
+keywords = ["embedded", "datagram", "infrared", "no-std"]
+
+documentation = "https://docs.rs/manchester-code"
+homepage = "https://github.com/almedso/manchester-code"
+repository = "https://github.com/almedso/manchester-code"
+readme = "README.md"
+license = "MIT"
+include = [
+    "**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE.md",
+]
 
 [dependencies]
 defmt = "0.3.0"
