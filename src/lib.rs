@@ -60,7 +60,7 @@
 //! use board::hal::stm32;
 //! use board::hal::nb::block;
 //!
-//! use manchester_code::Decoder;
+//! use manchester_code::{InactivityLevel, FirstBitExpectation, BitOrder, Decoder};
 //!
 //! #[cortex_m_rt::entry]
 //! fn main() -> ! {
@@ -72,7 +72,10 @@
 //!
 //!     let mut timer = dp.TIM17.timer(&mut rcc);
 //!     timer.start(297.us());
-//!     let mut receiver = Decoder::new(true);
+//!         let mut receiver = Decoder::new(
+//!             InactivityLevel::High,
+//!             FirstBitExpectation::Zero,
+//!             BitOrder::LittleEndian);
 //!     loop {
 //!         match receiver.next(infrared.is_high().unwrap()) {
 //!             None => (),
@@ -95,10 +98,14 @@ use core::ops::Index;
 
 use embedded_hal::Pwm;
 
+/// BitOrder or endian describes the ordering of bits during transmission
+///
+/// Big endian:  MSB is transmitted first; LSB is transmitted last
+/// Little endian: LSB is transmitted first; MSB is transmitted last
 #[derive(Copy, Clone, Debug)]
 pub enum BitOrder {
-    BigEndian,    // MSB is transmitted first; LSB is transmitted last
-    LittleEndian, // LSB is transmitted first; MSB is transmitted last
+    BigEndian,
+    LittleEndian,
 }
 
 /// Representation of a datagram
@@ -125,7 +132,7 @@ impl Datagram {
     ///
     /// * `bit` - The bit value to record at index 0
     /// * `bit_order`- The bit order either BigEndian or LittleEndian determines
-    ///                if the bit is added at the MSB or LSB position
+    ///                if the bit is added at the LSB or MSB position
     ///
     /// # Returns
     ///
@@ -136,13 +143,13 @@ impl Datagram {
             Err(Error)
         } else {
             match order {
-                BitOrder::LittleEndian => {
+                BitOrder::BigEndian => {
                     self.buffer <<= 1;
                     if bit {
                         self.buffer += 1;
                     };
                 }
-                BitOrder::BigEndian => {
+                BitOrder::LittleEndian => {
                     if bit {
                         self.buffer += 1 << self.length_in_bit;
                     }
@@ -161,9 +168,30 @@ impl Datagram {
         0 == self.length_in_bit
     }
 
-    /// Extract a data slice of from the datagram
+    /// Extract a data slice from the datagram
     ///
-    /// Byteorder is maintained
+    /// # Args
+    ///
+    /// * `min` - start index (included)
+    /// * `max` - max index (not included)
+    ///
+    /// # Returns
+    ///
+    /// the extracted value
+    ///
+    /// # Panics
+    ///  if 0 <= min < max <= len() is violated
+    ///
+    /// # Example
+    /// ```rust
+    ///
+    /// use manchester_code::Datagram;
+    ///
+    /// let datagram = Datagram::new("0-111_10101_00001111");
+    /// assert_eq!(0b1111, datagram.extract_data(0, 4));
+    /// assert_eq!(0b1111, datagram.extract_data(0, 8));
+    /// assert_eq!(0b1111, datagram.extract_data(datagram.len()-5, datagram.len()));
+    /// ```
     pub fn extract_data(&self, min: u8, max: u8) -> u128 {
         if max > self.length_in_bit {
             panic!("Max index to big");
@@ -174,8 +202,8 @@ impl Datagram {
 
         let mut value = 0_u128;
         for index in min..max {
-            let mask: u128 = 1 << (self.length_in_bit - 1 - index);
-            let bit = if mask & self.buffer == 0 { &0 } else { &1 };
+            let mask: u128 = 1 << (max + min - index - 1);
+            let bit = if (mask & self.buffer) == 0 { &0 } else { &1 };
             value <<= 1;
             value += bit;
         }
@@ -236,7 +264,7 @@ impl Index<u8> for Datagram {
     /// ```rust
     /// use manchester_code::Datagram;
     ///
-    /// let datagram = Datagram::new("0-111_10101_00001111");  // LittleEndian representation
+    /// let datagram = Datagram::new("0-111_10101_00001111");
     /// assert_eq!(1, datagram[0]);
     /// assert_eq!(0, datagram[5]);
     /// ```
@@ -244,7 +272,7 @@ impl Index<u8> for Datagram {
         if index >= self.length_in_bit {
             panic!("Wrong Index")
         }
-        let mask: u128 = 1 << (self.length_in_bit - 1 - index);
+        let mask: u128 = 1 << index;
         if mask & self.buffer == 0 {
             &0
         } else {
@@ -393,12 +421,16 @@ impl<I: Iterator<Item = bool>> Iterator for Encoder<I> {
     }
 }
 
-//
+/// Inactivity level is the level the Pin where the infrared receiver is attached to
+/// takes if no datagram is transmitted
 pub enum InactivityLevel {
     High,
     Low,
 }
 
+/// A priori knowledge about the first expected bit of a telegram
+///
+/// It is needed for correct decoding if the datagram length is unknown
 pub enum FirstBitExpectation {
     Zero,
     One,
