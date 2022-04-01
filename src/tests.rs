@@ -258,9 +258,14 @@ mod decoder {
     use super::*;
 
     macro_rules! assert_receive_datagram {
-        ($sut:expr, $signal:expr, $expected:expr) => {
+        ($sut:expr, $sample:expr, $expected:expr) => {
             let expected = Datagram::new($expected);
-            match $sut.next($signal) {
+            let signal = match $sample {
+                '-' => true,
+                '.' => false,
+                _ => false,
+            };
+            match $sut.next(signal) {
                 None => assert!(false, "None at compare"),
                 Some(datagram) => assert_eq!(datagram, expected),
             };
@@ -283,22 +288,36 @@ mod decoder {
         };
     }
 
+    macro_rules! assert_reverse_signal_sampling {
+        ($sut:expr, $signal:expr) => {
+            for sample in $signal.bytes() {
+                match sample {
+                    b'-' => {
+                        assert!($sut.next(false).is_none())
+                    }
+                    b'.' => {
+                        assert!($sut.next(true).is_none())
+                    }
+                    _ => (),
+                };
+            }
+        };
+    }
+
     #[test]
     fn new() {
         let sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
+            ActivityLevel::Low,
+            SyncOnTurningEdge::First,
             BitOrder::LittleEndian,
         );
-        assert_eq!(true, sut.high_inactivity);
         assert_eq!(true, sut.previous_sample);
 
         let sut = Decoder::new(
-            InactivityLevel::Low,
-            FirstBitExpectation::Zero,
+            ActivityLevel::High,
+            SyncOnTurningEdge::First,
             BitOrder::LittleEndian,
         );
-        assert_eq!(false, sut.high_inactivity);
         assert_eq!(false, sut.previous_sample);
 
         assert_eq!(NO_EDGE_EXIT_LIMIT, sut.edge_distance);
@@ -307,193 +326,123 @@ mod decoder {
     }
 
     #[test]
-    fn zero_bit() {
+    fn sample_on_first_datagram_1011() {
         let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
+            ActivityLevel::Low,
+            SyncOnTurningEdge::First,
+            BitOrder::BigEndian,
         );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------...---------";
+        //          -----+-----+-----+-----+-----+-----+
+        let input = "--------......------...---...---------";
         assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "0");
+        assert_receive_datagram!(&mut sut, '-', "1011");
     }
 
     #[test]
-    fn zero_zero_bits() {
+    fn sample_on_first_revere_high_active_datagram_0100() {
         let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
+            ActivityLevel::High,
+            SyncOnTurningEdge::First,
+            BitOrder::BigEndian,
         );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------...---...---------";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "00");
+        //          -----+-----+-----+-----+-----+-----+
+        let input = "--------......------...---...---------";
+        assert_reverse_signal_sampling!(&mut sut, input);
+        assert_receive_datagram!(&mut sut, '.', "0100");
     }
 
     #[test]
-    fn zero_zero_zero_bits() {
+    fn sample_on_first_edge_little_endian_datagram_1101() {
         let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------...---...---...---------";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "000");
-    }
-
-    #[test]
-    fn zero_one_bits() {
-        let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------......---------";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "10");
-    }
-
-    #[test]
-    fn zero_one_zero_bits() {
-        let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------......------...---------";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "010");
-    }
-
-    #[test]
-    fn zero_one_zero_zero_bits() {
-        let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
+            ActivityLevel::Low,
+            SyncOnTurningEdge::First,
             BitOrder::LittleEndian,
         );
         //           -----+-----+-----+-----+-----+-----+
         let input = "--------......------...---...---------";
         assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "0010");
+        assert_receive_datagram!(&mut sut, '-', "1101");
     }
 
     #[test]
-    fn zero_one_one_bits() {
+    fn sample_datagram_011() {
         let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
+            ActivityLevel::Low,
+            SyncOnTurningEdge::Second,
+            BitOrder::BigEndian,
         );
         //           -----+-----+-----+-----+-----+-----+
-        let input = "--------......---...---------";
-        // 01       put = "--------......---------";
+        let input = "-----...------...---...---------";
         assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "110");
+        assert_receive_datagram!(&mut sut, '-', "011");
     }
 
+    // tests about activity and edge level
+
     #[test]
-    fn zero_one_one_zero_bits() {
+    fn sample_low_active_on_first_edge_datagram_with_one_bit() {
         let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
+            ActivityLevel::Low,
+            SyncOnTurningEdge::First,
+            BitOrder::BigEndian,
         );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------......---...------...---------";
+        //           -----+-----+-----+
+        let input = "--------...---------";
         assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "0110");
+        assert_receive_datagram!(&mut sut, '-', "1");
     }
 
     #[test]
-    fn zero_one_one_one_bits() {
+    fn sample_low_active_on_second_edge_datagram_with_one_bit() {
         let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
+            ActivityLevel::Low,
+            SyncOnTurningEdge::Second,
+            BitOrder::BigEndian,
         );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------......---...---...---------";
+        //           -----+-----+-----+
+        let input = "-----...---------";
         assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "1110");
+        assert_receive_datagram!(&mut sut, '-', "0");
     }
 
     #[test]
-    fn zero_one_one_one_zero_bits() {
+    fn sample_high_active_on_first_edge_datagram_with_one_bit() {
         let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
+            ActivityLevel::High,
+            SyncOnTurningEdge::First,
+            BitOrder::BigEndian,
         );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------......---...---...------...---------";
+        //           -----+-----+-----+
+        let input = "........---.........";
         assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "01110");
+        assert_receive_datagram!(&mut sut, '.', "0");
     }
 
     #[test]
-    fn zero_one_one_one_one_bits() {
+    fn sample_high_active_on_second_edge_datagram_with_one_bit() {
         let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
+            ActivityLevel::High,
+            SyncOnTurningEdge::Second,
+            BitOrder::BigEndian,
         );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------......---...---...---...---------";
+        //           -----+-----+-----+
+        let input = ".....---.........";
         assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "11110");
+        assert_receive_datagram!(&mut sut, '.', "1");
     }
 
     #[test]
-    fn low_inactivity_zero_bit() {
-        let mut sut = Decoder::new(
-            InactivityLevel::Low,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = ".........---.........";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, false, "0");
+    fn logic() {
+        let sample = false;
+        let high_activity = false;
+        assert!(true && (sample ^ !high_activity));
     }
 
     #[test]
-    fn low_inactivity_zero_one_bits() {
+    fn sample_failure_high_inactive_starts_with_low_sample() {
         let mut sut = Decoder::new(
-            InactivityLevel::Low,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "........------.........";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, false, "10");
-    }
-
-    #[test]
-    fn low_inactivity_zero_zero_bits() {
-        let mut sut = Decoder::new(
-            InactivityLevel::Low,
-            FirstBitExpectation::Zero,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "........---...---.........";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, false, "00");
-    }
-
-    #[test]
-    fn failure_high_inactive_starts_with_low_sample() {
-        let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
+            ActivityLevel::Low,
+            SyncOnTurningEdge::First,
             BitOrder::LittleEndian,
         );
         let input = "............";
@@ -501,10 +450,10 @@ mod decoder {
     }
 
     #[test]
-    fn failure_low_inactive_start_with_low_sample() {
+    fn sample_failure_low_inactive_start_with_low_sample() {
         let mut sut = Decoder::new(
-            InactivityLevel::Low,
-            FirstBitExpectation::Zero,
+            ActivityLevel::High,
+            SyncOnTurningEdge::First,
             BitOrder::LittleEndian,
         );
         let input = "......................";
@@ -512,10 +461,10 @@ mod decoder {
     }
 
     #[test]
-    fn failure_low_inactive_starts_with_high_sample() {
+    fn sample_failure_low_inactive_starts_with_high_sample() {
         let mut sut = Decoder::new(
-            InactivityLevel::Low,
-            FirstBitExpectation::Zero,
+            ActivityLevel::High,
+            SyncOnTurningEdge::First,
             BitOrder::LittleEndian,
         );
         let input = "-----------------";
@@ -523,10 +472,10 @@ mod decoder {
     }
 
     #[test]
-    fn failure_high_inactive_start_with_high_sample() {
+    fn sample_failure_high_inactive_start_with_high_sample() {
         let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
+            ActivityLevel::Low,
+            SyncOnTurningEdge::First,
             BitOrder::LittleEndian,
         );
         let input = "-----------------------";
@@ -534,10 +483,10 @@ mod decoder {
     }
 
     #[test]
-    fn no_datagram_low_inactive_one_edge_only() {
+    fn sample_no_datagram_low_inactive_one_edge_only() {
         let mut sut = Decoder::new(
-            InactivityLevel::Low,
-            FirstBitExpectation::Zero,
+            ActivityLevel::High,
+            SyncOnTurningEdge::First,
             BitOrder::LittleEndian,
         );
         let input = "...........-----------";
@@ -545,78 +494,13 @@ mod decoder {
     }
 
     #[test]
-    fn no_datagram_high_inactive_one_edge_only() {
+    fn sample_no_datagram_high_inactive_one_edge_only() {
         let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::Zero,
+            ActivityLevel::Low,
+            SyncOnTurningEdge::First,
             BitOrder::LittleEndian,
         );
         let input = "------------............";
         assert_signal_sampling!(&mut sut, input);
-    }
-
-    #[test]
-    fn one_bit() {
-        let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::One,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------...---------";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "1");
-    }
-
-    #[test]
-    fn one_one_bits() {
-        let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::One,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------...---...---------";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "11");
-    }
-
-    #[test]
-    fn one_zero_zero_bits() {
-        let mut sut = Decoder::new(
-            InactivityLevel::High,
-            FirstBitExpectation::One,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "--------...------...---...---------";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, true, "001");
-    }
-
-    #[test]
-    fn low_inactivity_one_zero_bits() {
-        let mut sut = Decoder::new(
-            InactivityLevel::Low,
-            FirstBitExpectation::One,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "........---......---.........";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, false, "01");
-    }
-
-    #[test]
-    fn low_inactivity_one_one_bits() {
-        let mut sut = Decoder::new(
-            InactivityLevel::Low,
-            FirstBitExpectation::One,
-            BitOrder::LittleEndian,
-        );
-        //           -----+-----+-----+-----+-----+-----+
-        let input = "........---...---.........";
-        assert_signal_sampling!(&mut sut, input);
-        assert_receive_datagram!(&mut sut, false, "11");
     }
 }

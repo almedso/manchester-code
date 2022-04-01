@@ -60,7 +60,7 @@
 //! use board::hal::stm32;
 //! use board::hal::nb::block;
 //!
-//! use manchester_code::{InactivityLevel, FirstBitExpectation, BitOrder, Decoder};
+//! use manchester_code::{ActivityLevel, SyncOnTurningEdge, BitOrder, Decoder};
 //!
 //! #[cortex_m_rt::entry]
 //! fn main() -> ! {
@@ -73,8 +73,8 @@
 //!     let mut timer = dp.TIM17.timer(&mut rcc);
 //!     timer.start(297.us());
 //!         let mut receiver = Decoder::new(
-//!             InactivityLevel::High,
-//!             FirstBitExpectation::Zero,
+//!             ActivityLevel::High,
+//!             SyncOnTurningEdge::First,
 //!             BitOrder::LittleEndian);
 //!     loop {
 //!         match receiver.next(infrared.is_high().unwrap()) {
@@ -88,7 +88,7 @@
 //! ```
 
 #![no_std]
-#![deny(warnings)]
+// #![deny(warnings)]
 #![deny(unsafe_code)]
 
 use defmt::Format;
@@ -421,9 +421,10 @@ impl<I: Iterator<Item = bool>> Iterator for Encoder<I> {
     }
 }
 
-/// Inactivity level is the level the Pin where the infrared receiver is attached to
-/// takes if no datagram is transmitted
-pub enum InactivityLevel {
+/// Activity level of the Pin where the infrared receiver is attached to.
+/// It is the opposite level the pin takes if no datagram is transmitted.
+#[derive(PartialEq)]
+pub enum ActivityLevel {
     High,
     Low,
 }
@@ -431,17 +432,17 @@ pub enum InactivityLevel {
 /// A priori knowledge about the first expected bit of a telegram
 ///
 /// It is needed for correct decoding if the datagram length is unknown
-pub enum FirstBitExpectation {
-    Zero,
-    One,
+pub enum SyncOnTurningEdge {
+    First,
+    Second,
 }
 
 /// Decode a Manchester encoded stream of periodically taken samples into
 /// a datagram.
 pub struct Decoder {
     // Config data
-    high_inactivity: bool,
-    first_bit_is_one: bool,
+    activity_level: ActivityLevel,
+    sync_on_turning_edge: SyncOnTurningEdge,
     bit_order: BitOrder,
     // Collected output data
     datagram: Datagram,
@@ -453,53 +454,59 @@ pub struct Decoder {
     record_marker_reached: bool,
 }
 
-const SAMPLES_PER_HALFBIT_PERIOD: u8 = 3;
+const SAMPLES_PER_HALF_BIT_PERIOD: u8 = 3;
 const TOLERANCE: u8 = 1;
 
 //   ___---___------   e - first edge
 //   xxx012345678901   x - exit criteria no bits are send anymore
 //     f----tttt--xxx  t - tolerance range an edge is expected
 
-const LOWER_BARRIER: u8 = 2 * SAMPLES_PER_HALFBIT_PERIOD - TOLERANCE;
-const UPPER_BARRIER: u8 = 2 * SAMPLES_PER_HALFBIT_PERIOD + TOLERANCE;
-const NO_EDGE_EXIT_LIMIT: u8 = 3 * SAMPLES_PER_HALFBIT_PERIOD;
+const LOWER_BARRIER: u8 = 2 * SAMPLES_PER_HALF_BIT_PERIOD - TOLERANCE;
+const UPPER_BARRIER: u8 = 2 * SAMPLES_PER_HALF_BIT_PERIOD + TOLERANCE;
+const NO_EDGE_EXIT_LIMIT: u8 = 3 * SAMPLES_PER_HALF_BIT_PERIOD;
 
 impl Decoder {
     /// Create an instance of a new manchester encoder
     ///
     /// # Arguments
     ///
-    /// * `high_inactivity` - A *true* value expects the input pin state high
-    ///                       when nothing is received
-    /// * `first_bit_is_one` - A *true value enforces the bit recording to start
-    ///                        with a "1". This is important to know upfront
-    ///                        where a new bit starts
+    /// * `activity_level` - Low and High indicate what the activity level is
+    ///                      the negation of the activity level is the inactivity
+    ///                      level where no datagram is transmitted.
+    /// * `sync_on_turning_edge` - Indication if on the First or the Second
+    ///                            edge bits are aligned.
     /// * `bit_order` - Either BigEndian (MSP is received first) or
     ///                 LittleEndian (LSB is received first)
+    /// In combination of activity_level and sync_on_turning_edge it is determined
+    /// what if the first bit is either zero or one
+    ///
+    /// | Activity level | Sync on turning edge | Resulting first bit datagram |
+    /// |----------------|----------------------|------------------------------|
+    /// | High           | First                | Zero                         |
+    /// | High           | Second               | One                          |
+    /// | Low            | First                | One                          |
+    /// | Low            | Second               | Zero                         |
+    ///
     pub const fn new(
-        inactivity_level: InactivityLevel,
-        first_bit_expectation: FirstBitExpectation,
+        activity_level: ActivityLevel,
+        sync_on_turning_edge: SyncOnTurningEdge,
         bit_order: BitOrder,
     ) -> Self {
-        let high_inactivity = match inactivity_level {
-            InactivityLevel::High => true,
-            InactivityLevel::Low => false,
-        };
-        let first_bit_is_one = match first_bit_expectation {
-            FirstBitExpectation::One => true,
-            FirstBitExpectation::Zero => false,
+        let previous_sample = match activity_level {
+            ActivityLevel::High => false,
+            ActivityLevel::Low => true,
         };
         Decoder {
             datagram: Datagram {
                 buffer: 0,
                 length_in_bit: 0,
             },
-            previous_sample: high_inactivity,
+            previous_sample,
             edge_distance: NO_EDGE_EXIT_LIMIT,
             recording_distance: NO_EDGE_EXIT_LIMIT,
             receiving_started: false,
-            high_inactivity,
-            first_bit_is_one,
+            activity_level,
+            sync_on_turning_edge,
             record_marker_reached: false,
             bit_order,
         }
@@ -530,6 +537,8 @@ impl Decoder {
         //
         // Record marker are the sample taken directly after the edge
         // in the middle of the transmission of a bit
+        // Record marker are aligned to SyncOnTurningEdge.
+        //
         // As of the manchester protocol definition, there must be always
         // an edge in the middle of transmission of the bit.
         //
@@ -551,22 +560,23 @@ impl Decoder {
         if sample != self.previous_sample {
             if !self.receiving_started {
                 // cover the start of the telegram
-                if self.first_bit_is_one {
-                    // start with a "1"
-                    // by protocol design it is guaranteed that there is a second edge
-                    // within half-bit time aka within SAMPLES_PER_HALFBIT_PERIOD
-                    if self.edge_distance <= SAMPLES_PER_HALFBIT_PERIOD + TOLERANCE {
-                        // second edge at the record marker
+                match self.sync_on_turning_edge {
+                    SyncOnTurningEdge::First => {
+                        // first edge is the record marker
                         self.record_marker_reached = true;
                         self.receiving_started = true;
-                    } else {
-                        // very first edge -> do nothing on purpose
                     }
-                } else {
-                    // start with a "0"
-                    // first edge is the record marker
-                    self.record_marker_reached = true;
-                    self.receiving_started = true;
+                    SyncOnTurningEdge::Second => {
+                        // by protocol design it is guaranteed that there is a second edge
+                        // within half-bit time aka within SAMPLES_PER_HALF_BIT_PERIOD
+                        if self.edge_distance <= SAMPLES_PER_HALF_BIT_PERIOD + TOLERANCE {
+                            // first edge at the record marker
+                            self.record_marker_reached = true;
+                            self.receiving_started = true;
+                        } else {
+                            // very first edge -> do nothing on purpose
+                        }
+                    }
                 }
             }
             if self.recording_distance >= LOWER_BARRIER && self.recording_distance <= UPPER_BARRIER
@@ -576,7 +586,7 @@ impl Decoder {
             if self.record_marker_reached {
                 // In the middle of a bit transmission the value is derived from the new sample
                 self.datagram
-                    .add_bit(sample ^ !self.high_inactivity, self.bit_order)
+                    .add_bit(!sample, self.bit_order) // the sample is NOT mixed with activity_level
                     .unwrap();
                 // reset internal data for the next record_marker
                 self.recording_distance = 1;
@@ -591,7 +601,8 @@ impl Decoder {
 
         if self.edge_distance > NO_EDGE_EXIT_LIMIT {
             // end of datagram condition no edge anymore
-            if !self.datagram.is_empty() && sample ^ !self.high_inactivity {
+            if !self.datagram.is_empty() && (sample ^ (self.activity_level == ActivityLevel::High))
+            {
                 return_value = Some(self.datagram);
                 self.receiving_started = false;
             }
@@ -617,7 +628,46 @@ impl Decoder {
 ///
 /// # Example
 ///
-/// TODO
+/// ```ignore
+/// #[cortex_m_rt::entry]
+///
+/// fn main() -> ! {
+///     let dp = stm32::Peripherals::take().expect("cannot take peripherals");
+///
+///    // Set up the system clock
+///     //// let mut flash = dp.FLASH.constrain();
+///     let mut rcc = dp.RCC.constrain();
+///
+///     // Setup PWM we use Arduino PIN D5 -> is PB4 / TIM3_CH1 on stm32g071
+///     let gpiob = dp.GPIOB.split(&mut rcc);
+///
+///     // let clocks = rcc.cfgr.sysclk(16.MHz()).freeze(&mut flash.acr);
+///
+///     let pwm_pin = gpiob.pb4;
+///     let pwm = dp.TIM3.pwm(36_u32.khz(), &mut rcc);
+///     let mut pwm_send_ir = pwm.bind_pin(pwm_pin);
+///
+///     pwm_send_ir.set_duty(pwm_send_ir.get_max_duty() / 4); // 25% duty cyle
+///
+///     // Set up the interrupt timer
+///     let mut timer = dp.TIM2.timer(&mut rcc);
+///     timer.start(889.us());
+///
+///     const PAUSE_HALF_BITS_BETWEEN_DATAGRAMS: u8 = 3;
+///     let mut infrared_emitter = InfraredEmitter::new(PAUSE_HALF_BITS_BETWEEN_DATAGRAMS, pwm_send_ir, ());
+///
+///     defmt::println!("Init done");
+///
+///     let datagram = Datagram::new("0101_0011_0111_0001");
+///     defmt::println!("Send new datagram {}", datagram);
+///     infrared_emitter.send_if_possible(datagram, 25);
+///
+///     loop {
+///         infrared_emitter.send_half_bit();
+///         block!(timer.wait()).unwrap();
+///     }
+/// }
+/// ```
 #[derive(Debug)]
 pub struct InfraredEmitter<P, C, I> {
     encoder: Option<Encoder<I>>,
