@@ -2,7 +2,7 @@
 authors = ["Volker Kempert <volker.kempert@almedso.de>"]
 name = "manchester-code"
 edition = "2018"
-version = "0.1.0"
+version = "0.2.0"
 description = "A no-std library to allow Manchester encoding and decoding of datagrams."
 keywords = ["embedded", "datagram", "infrared", "no-std"]
 
